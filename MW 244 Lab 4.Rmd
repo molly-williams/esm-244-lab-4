@@ -1,0 +1,180 @@
+---
+title: "244 Lab 4"
+author: "Molly Williams"
+date: "1/31/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+0. Load Packages
+```{r}
+
+library(tidyverse)
+library(Ecdat) #there's data within packages!
+library(plm)
+library(lmtest)
+library(car)
+```
+
+
+1. Part 1: Nonlinear least squares (logistic growth of bacteria)
+
+```{r}
+
+CellGrowth <- read_csv("CellGrowth.csv")
+
+# Look at it:
+
+ggplot(CellGrowth, aes(x = Time, y = CellCount)) + 
+  geom_point()
+
+# Estimate for K: 3700? Have to provide initial estimates for the model for convergence
+
+## Find estimates for logistic growth:
+## N = A/(1+Be^(~rt))
+## Predictor variable = time, outcome variable = population size 
+## 2100 = reasonable estimate for population starting size (N0) - if this is true, what is B?
+
+BEstimate <- (3700 - 2000)/2000 # ~0.85
+
+# Look back at the graph to see where exponential growth is happening; appox 0-5
+## Estimate r (the growth rate)
+
+lag_phase <- CellGrowth %>% 
+  filter(Time<5)
+
+ggplot(lag_phase, aes(x = Time, y = log(CellCount))) +
+  geom_point()
+
+# Since slope looks linear on log scale, you know this was a good estimate of the exponential growth phase 
+
+lm(log(CellCount) ~ Time, data = lag_phase)
+
+# Spits out a time estimate of 0.1035
+
+```
+
+Find model A, B, and r using Gauss-Newton method for iterative convergence (nonlinear least squares)
+ 
+Use the nls() function:
+
+```{r}
+
+cell_fit <- nls(CellCount ~ A/(1+B*exp(-r*Time)),
+                start = list(A = 3700, B = 0.85, r = 0.1035),
+                data = CellGrowth,
+                trace = TRUE)
+
+# Returns a traceback of all iterations
+
+cell_fit
+
+A <- coef(cell_fit)[1] # don't set to an exact number in case something in the data changes; this way automatically updates if the model is updated
+B <- coef(cell_fit)[2]
+r <- coef(cell_fit)[3]
+
+# Now everything is stored in a way that will allow you to plot them! 
+
+# Create a new sequence of time values (time_seq)
+time_seq <- seq(0,20, length = 100) # Creates string of new values between 0 and 20; default is increments of one, so adding length = 100 says how many values are wanted 
+
+# Plug the new sequence into the model with the parameters A, B and r that we found:
+
+cell_pred <- A/(1+B*exp(-r*time_seq))
+
+pred_df <- data.frame(time_seq, cell_pred)
+
+ggplot(CellGrowth, aes(x = Time, y = CellCount)) + 
+  geom_point(colour = "blue", size = 3) + 
+  theme_bw() +
+  geom_line(data = pred_df, aes(x = time_seq, y = cell_pred), colour = "orange", size = 1) + 
+  xlab("Time (h)") +
+  ylab("Cell Count") +
+  ggtitle("Bacterial Growth")
+```
+
+
+2. Panel Regression: First shot
+
+
+Entities variable: states
+Time variable: year
+Dependent variable: packpc
+avgprs: out predictor variable of interest
+
+
+*What is the effect of cigarette price on purchases?*
+
+```{r}
+
+cigs_panel <- Cigarette %>% 
+  select(state, year, packpc, avgprs) #only retaining the 4 columns we're interested in
+
+
+# What is the relationship overall if we look at data by state?
+
+ggplot(cigs_panel, aes(x = avgprs, y = packpc, group = state)) + 
+  geom_point(aes(color = state)) + 
+  geom_smooth(method = "lm", aes(color = state, se = FALSE, size = 0.3)) # whyyy are these lines so fat??
+
+ggplot(cigs_panel, aes(x = year, y = packpc, group = state)) + 
+  geom_point(aes(color= state)) +
+  geom_smooth(method = "lm", aes(color = state), se = FALSE, size = 0.2)
+```
+
+Entity fixed effects model:
+
+```{r}
+
+cigs_model <- plm(packpc ~ avgprs,
+                  data = cigs_panel,
+                  index = c("state", "year"),
+                  model = "within")
+
+cigs_model
+
+coeftest(cigs_model, vcov. = vcovHC(cigs_model, type = "HC1"))
+
+
+```
+
+Add time fixed effects:
+
+```{r}
+
+et_cigs_model <- plm(packpc ~ avgprs,
+                     data = cigs_panel,
+                     index = c("state", "year"),
+                     model = "within",
+                     effect = "twoways")
+
+
+et_cigs_model
+
+coeftest(et_cigs_model, vcov. = vcovHC(et_cigs_model, type = "HC1")) #coefficient is still highly significant, but is a different value
+
+# Which model is better? Should we use time fixed effects, or just entity fixed effects?
+
+pFtest(et_cigs_model, cigs_model)
+
+
+```
+
+**Conclusion:** Yes, we should include time fixed effects.  This makes sense, because we know that cigarette use is decreasing universally over time due to so many factors - health, societal pressure, etc.  We would expect time to substantially influence the number of packs per person.
+
+
+
+
+
+
+
+
+
+
+
+
+
